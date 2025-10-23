@@ -1,17 +1,36 @@
-import os import logging from fastapi import FastAPI, Request, HTTPException
+from contextlib import asynccontextmanager
 
-from logging_setup import setup_logging LOG_FILE = setup_logging() logger = logging.getLogger("app")
+from fastapi import FastAPI
+from fastapi.params import Depends
+from starlette.responses import JSONResponse
+import uvicorn
 
-from sqlalchemy import text from sqlalchemy.ext.asyncio import create_async_engine
+from database import create_tables
+from repository import get_dog_repository, DogRepository
+from schemas import Dog
 
-app = FastAPI()
 
-@app.on_event("startup") async def on_startup(): logger.info("App startup event fired. Log file: %s", LOG_FILE)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await create_tables()
+    yield
 
-@app.get("/") async def index(request: Request, error: int | None = None): logger.info("Index hit from %s %s", request.client.host if request.client else "?", request.url.path) if error: logger.error("Forced error for testing logs") raise HTTPException(status_code=500, detail="forced error") return {"ok": True, "log_file": LOG_FILE}
+app = FastAPI(lifespan=lifespan)
 
-DATABASE_URL = os.getenv("DATABASE_URL") # задайте в окружении SQL_ECHO = os.getenv("SQL_ECHO", "0") == "1" engine = create_async_engine(DATABASE_URL, echo=SQL_ECHO) if DATABASE_URL else None
 
-@app.get("/db-ping") async def db_ping(): if not engine: logger.warning("DATABASE_URL is not set") return {"db": "no DATABASE_URL"} async with engine.begin() as conn: res = await conn.execute(text("SELECT 1")) val = res.scalar_one() logger.info("DB ping result: %s", val) return {"db": val}
+@app.get("/dog/{id}")
+async def get_a_dog(id: str, dog_repo: DogRepository = Depends(get_dog_repository)) -> Dog:
+    response = await dog_repo.get_dog_by_id(id)
+    if response is None:
+        return JSONResponse(status_code=404, content={"message": "Dog not found"})
+    return response
 
-if name == " main ": import uvicorn # Важно: не даем Uvicorn перезаписать наш лог-конфиг uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")), log_config=None)
+
+@app.post("/dog")
+async def create_dog(dog: Dog, dog_repo: DogRepository = Depends(get_dog_repository)):
+    await dog_repo.create_dog(dog)
+    return JSONResponse(status_code=201, content={"message": "Dog created successfully"})
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
