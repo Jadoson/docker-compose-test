@@ -1,42 +1,28 @@
-import os import logging import logging.config
+import os import logging from logging.handlers import RotatingFileHandler from pathlib import Path
 
-def setup_logging(): from logging.handlers import RotatingFileHandler
+def setup_logging(): # Абсолютный путь в домашнем каталоге пользователя log_dir_env = os.environ.get("LOG_DIR") if log_dir_env: LOG_DIR = Path(log_dir_env).expanduser() else: LOG_DIR = Path.home() / "logs"
 
-LOG_DIR = os.environ.get("LOG_DIR", os.path.expanduser("~/logs"))
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+log_file = LOG_DIR / "app.log"
 
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "default": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "stream": "ext://sys.stdout",
-            "formatter": "default",
-        },
-        "file": {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": os.path.join(LOG_DIR, "app.log"),
-            "maxBytes": 5 * 1024 * 1024,
-            "backupCount": 5,
-            "encoding": "utf-8",
-            "formatter": "default",
-        },
-    },
-    "root": {"level": LOG_LEVEL, "handlers": ["console", "file"]},
-    "loggers": {
-        "uvicorn": {"level": LOG_LEVEL, "handlers": ["console", "file"], "propagate": False},
-        "uvicorn.error": {"level": LOG_LEVEL, "handlers": ["console", "file"], "propagate": False},
-        "uvicorn.access": {"level": LOG_LEVEL, "handlers": ["console", "file"], "propagate": False},
-        "sqlalchemy.engine": {"level": "INFO", "handlers": ["console", "file"], "propagate": False},
-    },
-}
+fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
-logging.config.dictConfig(LOGGING)
-logging.getLogger(__name__).info("Logging configured. LOG_DIR=%s", LOG_DIR)
-return LOGGING
+# Переконфигурируем логирование подчистую
+file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=5, encoding="utf-8")
+stream_handler = logging.StreamHandler()
 
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format=fmt,
+    handlers=[stream_handler, file_handler],
+    force=True,  # важно: перезапишет любые предыдущие настройки (в т.ч. uvicorn)
+)
+
+# Дадим полезным логгерам уровни и пропагирование к root, чтобы они попали в наш файл
+for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "sqlalchemy.engine"):
+    lg = logging.getLogger(name)
+    lg.setLevel(logging.INFO)
+    lg.propagate = True  # пусть идут в root, где наш file handler
+
+logging.getLogger(__name__).info("Logging configured. LOG_DIR=%s", str(LOG_DIR))
+return str(log_file)
